@@ -11,9 +11,9 @@ cluster:
     # Which processing queue should be used?
     queue: 'shortall'
     # Location to put <jobid.log> files for cluster jobs
-    cluster_log_dir: '/home/tthatcher/logs'
+    cluster_log_dir: '/home/acpaquette/logs'
     cluster_submission: 'slurm'  # or `pbs`
-    tmp_scratch_dir: '/scratch/jlaura'
+    tmp_scratch_dir: '/scratch/acpaquette'
 
     # The amount of RAM (in MB) to request for jobs
     extractor_memory: 8192
@@ -21,14 +21,13 @@ cluster:
 
 ### Database Configuration ###
 database:
-    database_username: ''
-    database_password: ''
+    database_username: 'acpaquette'
+    database_password: 'acpaquette'
     database_host: 'smalls'
     database_port: 8001
     pgbouncer_port: 8003
     # The name of the database to connect to.  Tables will be created inside this DB.
-    # This CANNOT be anything but lowercase format e.g. exampledb
-    database_name: ''
+    database_name: 'adamdb'
     # The number of seconds to wait while attemping to connect to the DB.
     timeout: 500
 
@@ -36,14 +35,14 @@ database:
 redis:
     host: 'smalls'
     port: '8000'
-    completed_queue: 'tthatcherAutoC:done'
-    processing_queue: 'tthatcherAutoC:proc'
-    working_queue: 'tthatcherAutoC:working'
+    completed_queue: 'adam:done'
+    processing_queue: 'adam:proc'
+    working_queue: 'adam:working'
 
 pyro:
     ### Image Adder Configuration ###
     image_adder_uri: 'ia'
-    image_adder_port: 8009
+    image_adder_port: 8005
     image_adder_host: '0.0.0.0'
 
     ### Candidate Graph Configuration ###
@@ -64,8 +63,8 @@ directories:
 
 ### Developer PATHS ###
 developer:
-    autocnet_path: '/home/tthatcher/Desktop/Projects/Autocnet/autocnet_server'
-    autocnet_server_path: '/home/tthatcher/Desktop/Projects/Autocnet/autocnet'
+    autocnet_path: '/home/acpaquette/autocnet'
+    autocnet_server_path: '/home/acpaquette/repos/autocnet_server'
 
 algorithms:
     ring_match:
@@ -77,6 +76,7 @@ algorithms:
           tolerance: 0.02
         - target_points: 15
           tolerance: 0.025
+
 
 ### Database Creation - DO NOT CHANGE ###
 database_creation:
