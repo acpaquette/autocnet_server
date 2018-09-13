@@ -1,8 +1,8 @@
 import json
 
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, String, Integer, Float, ForeignKey, Boolean, LargeBinary
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import Column, String, Integer, Float, ForeignKey, Boolean, LargeBinary, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import relationship, backref
 from geoalchemy2 import Geometry
 from geoalchemy2.shape import to_shape
@@ -57,6 +57,12 @@ class Edges(Base):
     ring = Column(ARRAY(Float))
     fundamental = Column(ARRAY(Float, dimensions=2))
     active = Column(Boolean)
+    masks = Column(JSONB)
+
+class Costs(Base):
+    __tablename__ = 'costs'
+    match_id = Column(Integer, ForeignKey("matches.id", ondelete="CASCADE"), primary_key=True)
+    _cost = Column(JSONB)
 
 class Matches(Base):
     __tablename__ = 'matches'
@@ -72,24 +78,28 @@ class Matches(Base):
     source_y = Column(Float)
     destination_x = Column(Float)
     destination_y = Column(Float)
+    shift_x = Column(Float)
+    shift_y = Column(Float)
+    original_destination_x = Column(Float)
+    original_destination_y = Column(Float)
 
 
 class Cameras(Base):
     __tablename__ = 'cameras'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    image_id = Column(Integer, ForeignKey("images.id", ondelete="CASCADE"))
-    camera = Column(LargeBinary)
+    image_id = Column(Integer, ForeignKey("images.id", ondelete="CASCADE"), unique=True)
+    camera = Column(JSONB)
 
 
 class Images(Base):
     __tablename__ = 'images'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String)
-    path = Column(String)
+    name = Column(String, unique=True)
+    path = Column(String, unique=True)
     active = Column(Boolean)
-    footprint_latlon = Column(Geometry('POLYGONZ', srid=949900, dimension=3, spatial_index=True))
-    footprint_bodyfixed = Column(Geometry('POLYGONZ', dimension=3))
+    footprint_latlon = Column(Geometry('MULTIPOLYGONZ', srid=949900, dimension=3, spatial_index=True))
+    footprint_bodyfixed = Column(Geometry('MULTIPOLYGONZ', dimension=3))
     #footprint_bodyfixed = Column(Geometry('POLYGON',dimension=3))
 
     # Relationships
@@ -123,4 +133,4 @@ class Overlay(Base):
     __tablename__ = 'overlay'
     id = Column(Integer, primary_key=True, autoincrement=True)
     geom = Column(Geometry('POLYGONZ', srid=949900, dimension=3, spatial_index=True))
-    overlaps = Column(ARRAY(Integer))
+    overlaps = Column(ARRAY(Integer), unique=True)
