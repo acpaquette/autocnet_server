@@ -9,16 +9,11 @@ import requests
 import numpy as np
 import pyproj
 import gdal
-import ogr
+from gdal import ogr
 import pvl
 
 from plio.utils.utils import find_in_dict
 from plio.io.io_json import NumpyEncoder
-
-
-
-
-
 from plio.spatial.footprint import generate_gcps
 
 def data_from_cube(header):
