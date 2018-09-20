@@ -32,8 +32,8 @@ before_install:
   # Useful for debugging any issues with conda
   - conda info -a
   # Create the env
-  # - conda create -q -n test python=$PYTHON_VERSION
-  # - source activate test
+  - conda create -q -n test python=$PYTHON_VERSION
+  - source activate test
 
   # Install dependencies
   - conda config --add channels conda-forge
@@ -56,7 +56,7 @@ script:
 after_success:
   # - coveralls
   # Need to do the build in the root
-  # - source deactivate
+  - source deactivate
   - conda build --token $CONDA_UPLOAD_TOKEN --python $PYTHON_VERSION recipe -q
 
 notifications:
