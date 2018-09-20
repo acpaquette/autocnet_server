@@ -34,6 +34,7 @@ before_install:
   # Create the env
   - conda create -q -n test python=$PYTHON_VERSION
   - source activate test
+  - export PROJ_LIB=$CONDA_PREFIX/share/proj
 
   # Install dependencies
   - conda config --add channels conda-forge
