@@ -43,9 +43,7 @@ before_install:
   - conda config --set ssl_verify false
   - conda install conda-build anaconda-client
   - conda config --set anaconda_upload yes
-  - conda install -c conda-forge pyproj numpy requests libgdal gdal pvl jinja2 plio
-  - conda install -c usgs-astrogeology csmapi
-  # - conda install -c conda-forge vlfeat cyvlfeat plio scipy networkx numexpr cython matplotlib pillow runipy geopandas opencv numpy gdal autocnet-dev
+  - conda env update -n test -f environment.yml
 
   # Development installation
   - conda install pytest pytest-cov coverage sh anaconda-client conda-build
