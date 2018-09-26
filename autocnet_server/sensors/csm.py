@@ -7,6 +7,7 @@ import jinja2
 import requests
 
 import numpy as np
+import scipy.stats
 import pyproj
 import gdal
 from gdal import ogr
@@ -50,7 +51,7 @@ def create_camera(obj, url='http://pfeffer.wr.usgs.gov/v1/pds/',
     if plugin.canModelBeConstructedFromISD(isd, model_name):
         return plugin.constructModelFromISD(isd, model_name)
 
-def generate_boundary(camera, nnodes=5, n_points=10):
+def generate_boundary(isize, nnodes=5, n_points=10):
     '''
     Generates a bounding box given a camera model
 
@@ -71,11 +72,10 @@ def generate_boundary(camera, nnodes=5, n_points=10):
     boundary : lst
                List of full bounding box
     '''
-    isize = camera.getImageSize()
-    x = np.linspace(0, isize.samp, n_points)
-    y = np.linspace(0, isize.line, n_points)
-    boundary = [(i,0.) for i in x] + [(isize.samp, i) for i in y[1:]] +\
-               [(i, isize.line) for i in x[::-1][1:]] + [(0.,i) for i in y[::-1][1:]]
+    x = np.linspace(0, isize[0], n_points)
+    y = np.linspace(0, isize[1], n_points)
+    boundary = [(i,0.) for i in x] + [(isize[0], i) for i in y[1:]] +\
+               [(i, isize[1]) for i in x[::-1][1:]] + [(0.,i) for i in y[::-1][1:]]
 
     return boundary
 
@@ -112,7 +112,10 @@ def generate_latlon_boundary(camera, nnodes=5, semi_major=3396190, semi_minor=33
     alts : lst
            List of altitude values
     '''
-    boundary = generate_boundary(camera, nnodes=nnodes, n_points = n_points)
+    isize = camera.getImageSize()
+    isize = (isize.line, isize.samp)
+
+    boundary = generate_boundary(isize, nnodes=nnodes, n_points = n_points)
 
     ecef = pyproj.Proj(proj='geocent', a=semi_major, b=semi_minor)
     lla = pyproj.Proj(proj='latlon', a=semi_major, b=semi_minor)
@@ -206,8 +209,10 @@ def generate_latlon_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3
 
     ring = ogr.Geometry(ogr.wkbLinearRing)
     wrap_ring = ogr.Geometry(ogr.wkbLinearRing)
+
     poly = ogr.Geometry(ogr.wkbPolygon)
     wrap_poly = ogr.Geometry(ogr.wkbPolygon)
+
     multipoly = ogr.Geometry(ogr.wkbMultiPolygon)
 
     current_ring = ring
@@ -221,7 +226,8 @@ def generate_latlon_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3
 
             if coord_diff > 0 and np.isclose(previous_point[0], 360, rtol = 1e-03) and \
                                   np.isclose(coord[0], 0, atol=1e0, rtol=1e-01):
-                slope, b = compute_line(previous_point, coord)
+                regression = scipy.stats.linregress([previous_point[0], coord[0]], [previous_point[1], coord[1]])
+                slope, b = regression.slope, regression.intercept
                 current_ring.AddPoint(360 - 180, (slope*360 + b))
                 current_ring = wrap_ring
                 switch_point = 0 - 180, (slope*0 + b)
@@ -229,7 +235,8 @@ def generate_latlon_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3
 
             elif coord_diff < 0 and np.isclose(previous_point[0], 0, atol=1e0, rtol=1e-01) and \
                                     np.isclose(coord[0], 360, rtol = 1e-03):
-                slope, b = compute_line(previous_point, coord)
+                regression = scipy.stats.linregress([previous_point[0], coord[0]], [previous_point[1], coord[1]])
+                slope, b = regression.slope, regression.intercept
                 current_ring.AddPoint(0 - 180, (slope*0 + b))
                 current_ring.AddPoint(*switch_point)
                 current_ring = ring
@@ -250,7 +257,7 @@ def generate_latlon_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3
 
     return multipoly
 
-def generate_bodyfixed_footprint(camera, nnodes=5, n_points=10):
+def generate_bodyfixed_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3376200, n_points=10):
     '''
     Generates a bodyfixed footprint from a csmapi generated camera model
 
@@ -271,42 +278,11 @@ def generate_bodyfixed_footprint(camera, nnodes=5, n_points=10):
     : object
       ogr polygon
     '''
-    boundary = generate_boundary(camera, nnodes=nnodes, n_points=n_points)
+    latlon_fp = generate_latlon_footprint(camera, nnodes=5, semi_major = semi_major, semi_minor = semi_minor, n_points = n_points)
 
-    ring = ogr.Geometry(ogr.wkbLinearRing)
+    for i in range(fp.GetGeometryCount()):
+        latlon_coords = fp.GetGeometryRef(i).GetPoints()
 
-    for i in boundary:
-        gnd = camera.imageToGround(*i, 0)
-        ring.AddPoint(gnd[0], gnd[1], gnd[2])
-
-    poly = ogr.Geometry(ogr.wkbPolygon)
-    poly.AddGeometry(ring)
-    return poly
-
-def compute_line(point1, point2):
-    '''
-    Computes the slope and y-intercept between two points
-
-    Parameters
-    ----------
-    point1 : tuple
-             Tuple of x, y coord
-
-    point2 : tuple
-             Tuple of x, y coord
-
-    Returns
-    -------
-    slope : float
-            Slope of the line
-
-    b : float
-        y-intercept
-    '''
-    slope = (point2[1] - point1[1]) / (point2[0] - point1[0])
-    b = point2[1] - (slope*point2[0])
-
-    return slope, b
 
 def generate_vrt(camera, raster_size, fpath, outpath=None, no_data_value=0):
     gcps = generate_gcps(camera)
