@@ -1,9 +1,11 @@
-from csmapi import csmapi
+import ctypes
+from distutils import sysconfig
+import os
 import warnings
 
+from csmapi import csmapi
+
 # Register the usgscam plugin with the csmapi
-from distutils import sysconfig
-import ctypes
 
 lib = ctypes.CDLL(os.path.abspath(os.path.join(sysconfig.get_python_lib(), '../../libusgscsm.so')))
 if not lib:
