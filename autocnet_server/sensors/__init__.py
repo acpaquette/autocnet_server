@@ -1,4 +1,5 @@
 from csmapi import csmapi
+import warnings
 
 # Register the usgscam plugin with the csmapi
 from distutils import sysconfig
