@@ -254,8 +254,6 @@ def generate_bodyfixed_footprint(camera, nnodes=5, semi_major=3396190, semi_mino
             for j, _ in enumerate(latlon_coords):
                 latlon_fp.GetGeometryRef(i).GetGeometryRef(0).SetPoint(j, x[j], y[j], 0)
 
-    print(latlon_fp.GetGeometryRef(0).GetGeometryRef(0).GetPoints())
-
     return latlon_fp
 
 def generate_vrt(camera, raster_size, fpath, outpath=None, no_data_value=0):
