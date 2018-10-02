@@ -31,7 +31,7 @@ def generate_boundary(isize, nnodes=5, n_points=10):
 
     Returns
     -------
-    boundary : lst
+    boundary : list
                List of full bounding box
     '''
     x = np.linspace(0, isize[0], n_points)
@@ -65,13 +65,13 @@ def generate_latlon_boundary(camera, nnodes=5, semi_major=3396190, semi_minor=33
 
     Returns
     -------
-    lons : lst
+    lons : list
            List of longitude values
 
-    lats : lst
+    lats : list
            List of latitude values
 
-    alts : lst
+    alts : list
            List of altitude values
     '''
     isize = camera.getImageSize()
@@ -85,7 +85,12 @@ def generate_latlon_boundary(camera, nnodes=5, semi_major=3396190, semi_minor=33
     gnds = np.empty((len(boundary), 3))
 
     for i, b in enumerate(boundary):
-        gnd = camera.imageToGround(csmapi.ImageCoord(*b), 0)
+        # Could be potential errors or warnings from imageToGround
+        try:
+            gnd = camera.imageToGround(csmapi.ImageCoord(*b), 0)
+        except:
+            pass
+
         gnds[i] = [gnd.x, gnd.y, gnd.z]
 
     lons, lats, alts = pyproj.transform(ecef, lla, gnds[:,0], gnds[:,1], gnds[:,2])
@@ -116,7 +121,7 @@ def generate_gcps(camera, nnodes=5, semi_major=3396190, semi_minor=3376200, n_po
 
     Returns
     -------
-    gcps : lst
+    gcps : list
            List of all gcp records generated
     '''
     lons, lats, alts = generate_latlon_boundary(camera, nnodes=nnodes,
@@ -167,6 +172,8 @@ def generate_latlon_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3
                                                 semi_minor=semi_minor,
                                                 n_points=n_points)
 
+    # Transform coords from -180, 180 to 0, 360
+    # Makes crossing the maridian easier to identify
     ll_coords = [*zip(((lons + 180) % 360), lats)]
 
     ring = ogr.Geometry(ogr.wkbLinearRing)
@@ -179,30 +186,29 @@ def generate_latlon_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3
 
     current_ring = ring
     switch_point = None
-    previous_point = None
+    previous_point = ll_coords[0]
 
     for coord in ll_coords:
 
-        if previous_point:
-            coord_diff = previous_point[0] - coord[0]
+        coord_diff = previous_point[0] - coord[0]
 
-            if coord_diff > 0 and np.isclose(previous_point[0], 360, rtol = 1e-03) and \
-                                  np.isclose(coord[0], 0, atol=1e0, rtol=1e-01):
-                regression = scipy.stats.linregress([previous_point[0], coord[0]], [previous_point[1], coord[1]])
-                slope, b = regression.slope, regression.intercept
-                current_ring.AddPoint(360 - 180, (slope*360 + b))
-                current_ring = wrap_ring
-                switch_point = 0 - 180, (slope*0 + b)
-                current_ring.AddPoint(*switch_point)
+        if coord_diff > 0 and np.isclose(previous_point[0], 360, rtol = 1e-03) and \
+                              np.isclose(coord[0], 0, atol=1e0, rtol=1e-01):
+            regression = scipy.stats.linregress([previous_point[0], coord[0]], [previous_point[1], coord[1]])
+            slope, b = regression.slope, regression.intercept
+            current_ring.AddPoint(360 - 180, (slope*360 + b))
+            current_ring = wrap_ring
+            switch_point = 0 - 180, (slope*0 + b)
+            current_ring.AddPoint(*switch_point)
 
-            elif coord_diff < 0 and np.isclose(previous_point[0], 0, atol=1e0, rtol=1e-01) and \
-                                    np.isclose(coord[0], 360, rtol = 1e-03):
-                regression = scipy.stats.linregress([previous_point[0], coord[0]], [previous_point[1], coord[1]])
-                slope, b = regression.slope, regression.intercept
-                current_ring.AddPoint(0 - 180, (slope*0 + b))
-                current_ring.AddPoint(*switch_point)
-                current_ring = ring
-                current_ring.AddPoint(360 - 180, (slope*360 + b))
+        elif coord_diff < 0 and np.isclose(previous_point[0], 0, atol=1e0, rtol=1e-01) and \
+                                np.isclose(coord[0], 360, rtol = 1e-03):
+            regression = scipy.stats.linregress([previous_point[0], coord[0]], [previous_point[1], coord[1]])
+            slope, b = regression.slope, regression.intercept
+            current_ring.AddPoint(0 - 180, (slope*0 + b))
+            current_ring.AddPoint(*switch_point)
+            current_ring = ring
+            current_ring.AddPoint(360 - 180, (slope*360 + b))
 
         lat, lon = coord
         current_ring.AddPoint(lat - 180, lon)
@@ -245,12 +251,15 @@ def generate_bodyfixed_footprint(camera, nnodes=5, semi_major=3396190, semi_mino
     ecef = pyproj.Proj(proj='geocent', a=semi_major, b=semi_minor)
     lla = pyproj.Proj(proj='latlon', a=semi_major, b=semi_minor)
 
+    # Step over all geometry objects in the latlon footprint
     for i in range(latlon_fp.GetGeometryCount()):
         latlon_coords = np.array(latlon_fp.GetGeometryRef(i).GetGeometryRef(0).GetPoints())
 
+        # Check if the geometry object is populated with points
         if len(latlon_coords) > 0:
             x, y, z = pyproj.transform(lla, ecef,  latlon_coords[:,0], latlon_coords[:,1], latlon_coords[:,2])
 
+            # Step over all coordinate points in a geometry object and update said point
             for j, _ in enumerate(latlon_coords):
                 latlon_fp.GetGeometryRef(i).GetGeometryRef(0).SetPoint(j, x[j], y[j], 0)
 
