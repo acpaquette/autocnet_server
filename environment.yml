@@ -17,6 +17,8 @@ dependencies:
     - gdal
     - plio
     - pyproj
-    - shapely 
+    - shapely
     - geoalchemy2
-
+    - ncurses
+    - psycopg2
+    - requests

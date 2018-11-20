@@ -7,64 +7,128 @@ import jinja2
 import requests
 
 import numpy as np
+import scipy.stats
 import pyproj
 import gdal
-import ogr
+from gdal import ogr
 import pvl
 
-from plio.utils.utils import find_in_dict
-from plio.io.io_json import NumpyEncoder
+def generate_boundary(isize, nnodes=5, n_points=10):
+    '''
+    Generates a bounding box given a camera model
 
+    Parameters
+    ----------
+    camera : object
+             csmapi generated camera model
 
-def data_from_cube(header):
-    """
-    Take an ISIS Cube header and normalize back to PVL keywords.
-    """
-    instrument_name = 'CONTEXT CAMERA'
-    data = pvl.PVLModule([('START_TIME', find_in_dict(header, 'StartTime')),
-                          ('SPACECRAFT_NAME', find_in_dict(header, 'SpacecraftName').upper()),
-                          ('INSTRUMENT_NAME', instrument_name),
-                          ('SAMPLING_FACTOR', find_in_dict(header, 'SpatialSumming')),
-                          ('SAMPLE_FIRST_PIXEL', find_in_dict(header, 'SampleFirstPixel')),
-                          ('TARGET_NAME', find_in_dict(header, 'TargetName').upper()),
-                          ('LINE_EXPOSURE_DURATION', find_in_dict(header, 'LineExposureDuration')),
-                          ('SPACECRAFT_CLOCK_START_COUNT', find_in_dict(header, 'SpacecraftClockCount')),
-                          ('IMAGE', {'LINES':find_in_dict(header, 'Lines'),
-                                    'LINE_SAMPLES':find_in_dict(header, 'Samples')})])
+    nnodes : int
+             Not sure
 
-    return data
+    n_points : int
+               Number of points to generate between the corners of the bounding
+               box per side.
 
-def create_camera(obj, url='http://pfeffer.wr.usgs.gov/v1/pds/',
-                 plugin_name='USGS_ASTRO_LINE_SCANNER_PLUGIN',
-                 model_name='USGS_ASTRO_LINE_SCANNER_SENSOR_MODEL'):
-    data = data_from_cube(obj.metadata)
+    Returns
+    -------
+    boundary : list
+               List of full bounding box
+    '''
+    x = np.linspace(0, isize[0], n_points)
+    y = np.linspace(0, isize[1], n_points)
+    boundary = [(i,0.) for i in x] + [(isize[0], i) for i in y[1:]] +\
+               [(i, isize[1]) for i in x[::-1][1:]] + [(0.,i) for i in y[::-1][1:]]
 
-    data_serialized = {'label': pvl.dumps(data).decode()}
-    r = requests.post(url, json=data_serialized).json()
-    r['IKCODE'] = -1
-    # Get the ISD back and instantiate a local ISD for the image
-    isd = csmapi.Isd.loads(r)
+    return boundary
 
-    # Create the plugin and camera as usual
-    plugin = csmapi.Plugin.findPlugin(plugin_name)
-    if plugin.canModelBeConstructedFromISD(isd, model_name):
-        return plugin.constructModelFromISD(isd, model_name)
+def generate_latlon_boundary(camera, nnodes=5, semi_major=3396190, semi_minor=3376200, n_points=10):
+    '''
+    Generates a latlon bounding box given a camera model
 
-def generate_gcps(camera, nnodes=5, semi_major=3396190, semi_minor=3376200):
+    Parameters
+    ----------
+    camera : object
+             csmapi generated camera model
+
+    nnodes : int
+             Not sure
+
+    semi_major : int
+                 Semimajor axis of the target body
+
+    semi_minor : int
+                 Semiminor axis of the target body
+
+    n_points : int
+               Number of points to generate between the corners of the bounding
+               box per side.
+
+    Returns
+    -------
+    lons : list
+           List of longitude values
+
+    lats : list
+           List of latitude values
+
+    alts : list
+           List of altitude values
+    '''
+    isize = camera.getImageSize()
+    isize = (isize.line, isize.samp)
+
+    boundary = generate_boundary(isize, nnodes=nnodes, n_points = n_points)
+
     ecef = pyproj.Proj(proj='geocent', a=semi_major, b=semi_minor)
     lla = pyproj.Proj(proj='latlon', a=semi_major, b=semi_minor)
 
-    isize = camera.getImageSize()
-    isize = [isize.samp, isize.line]
-    x = np.linspace(0,isize[1], 10)
-    y = np.linspace(0,isize[0], 10)
-    boundary = [(i,0.) for i in x] + [(isize[1], i) for i in y[1:]] +\
-               [(i, isize[0]) for i in x[::-1][1:]] + [(0.,i) for i in y[::-1][1:]]
     gnds = np.empty((len(boundary), 3))
+
     for i, b in enumerate(boundary):
-        gnd = camera.imageToGround(csmapi.ImageCoord(*b), 0)
+        # Could be potential errors or warnings from imageToGround
+        try:
+            gnd = camera.imageToGround(csmapi.ImageCoord(*b), 0)
+        except:
+            pass
+
         gnds[i] = [gnd.x, gnd.y, gnd.z]
+
     lons, lats, alts = pyproj.transform(ecef, lla, gnds[:,0], gnds[:,1], gnds[:,2])
+    return lons, lats, alts
+
+def generate_gcps(camera, nnodes=5, semi_major=3396190, semi_minor=3376200, n_points=10):
+    '''
+    Generates an area of ground control points formated as:
+    <GCP Id="" Info="" Pixel="" Line="" X="" Y="" Z="" /> per record
+
+    Parameters
+    ----------
+    camera : object
+             csmapi generated camera model
+
+    nnodes : int
+             Not sure
+
+    semi_major : int
+                 Semimajor axis of the target body
+
+    semi_minor : int
+                 Semiminor axis of the target body
+
+    n_points : int
+               Number of points to generate between the corners of the bounding
+               box per side.
+
+    Returns
+    -------
+    gcps : list
+           List of all gcp records generated
+    '''
+    lons, lats, alts = generate_latlon_boundary(camera, nnodes=nnodes,
+                                                semi_major=semi_major,
+                                                semi_minor=semi_minor,
+                                                n_points=n_points)
+
     lla = np.vstack((lons, lats, alts)).T
 
     tr = zip(boundary, lla)
@@ -76,40 +140,130 @@ def generate_gcps(camera, nnodes=5, semi_major=3396190, semi_minor=3376200):
 
     return gcps
 
-def generate_latlon_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3376200):
+def generate_latlon_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3376200, n_points=10):
+    '''
+    Generates a latlon footprint from a csmapi generated camera model
+
+    Parameters
+    ----------
+    camera : object
+             csmapi generated camera model
+
+    nnodes : int
+             Not sure
+
+    semi_major : int
+                 Semimajor axis of the target body
+
+    semi_minor : int
+                 Semiminor axis of the target body
+
+    n_points : int
+               Number of points to generate between the corners of the bounding
+               box per side.
+
+    Returns
+    -------
+    : object
+      ogr multipolygon containing between one and two polygons
+    '''
+    lons, lats, _ = generate_latlon_boundary(camera, nnodes=nnodes,
+                                                semi_major=semi_major,
+                                                semi_minor=semi_minor,
+                                                n_points=n_points)
+
+    # Transform coords from -180, 180 to 0, 360
+    # Makes crossing the maridian easier to identify
+    ll_coords = [*zip(((lons + 180) % 360), lats)]
+
+    ring = ogr.Geometry(ogr.wkbLinearRing)
+    wrap_ring = ogr.Geometry(ogr.wkbLinearRing)
+
+    poly = ogr.Geometry(ogr.wkbPolygon)
+    wrap_poly = ogr.Geometry(ogr.wkbPolygon)
+
+    multipoly = ogr.Geometry(ogr.wkbMultiPolygon)
+
+    current_ring = ring
+    switch_point = None
+    previous_point = ll_coords[0]
+
+    for coord in ll_coords:
+
+        coord_diff = previous_point[0] - coord[0]
+
+        if coord_diff > 0 and np.isclose(previous_point[0], 360, rtol = 1e-03) and \
+                              np.isclose(coord[0], 0, atol=1e0, rtol=1e-01):
+            regression = scipy.stats.linregress([previous_point[0], coord[0]], [previous_point[1], coord[1]])
+            slope, b = regression.slope, regression.intercept
+            current_ring.AddPoint(360 - 180, (slope*360 + b))
+            current_ring = wrap_ring
+            switch_point = 0 - 180, (slope*0 + b)
+            current_ring.AddPoint(*switch_point)
+
+        elif coord_diff < 0 and np.isclose(previous_point[0], 0, atol=1e0, rtol=1e-01) and \
+                                np.isclose(coord[0], 360, rtol = 1e-03):
+            regression = scipy.stats.linregress([previous_point[0], coord[0]], [previous_point[1], coord[1]])
+            slope, b = regression.slope, regression.intercept
+            current_ring.AddPoint(0 - 180, (slope*0 + b))
+            current_ring.AddPoint(*switch_point)
+            current_ring = ring
+            current_ring.AddPoint(360 - 180, (slope*360 + b))
+
+        lat, lon = coord
+        current_ring.AddPoint(lat - 180, lon)
+        previous_point = coord
+
+    poly.AddGeometry(ring)
+    wrap_poly.AddGeometry(wrap_ring)
+
+    if not wrap_poly.IsEmpty():
+        multipoly.AddGeometry(wrap_poly)
+
+    if not poly.IsEmpty():
+        multipoly.AddGeometry(poly)
+
+    return multipoly
+
+def generate_bodyfixed_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3376200, n_points=10):
+    '''
+    Generates a bodyfixed footprint from a csmapi generated camera model
+
+    Parameters
+    ----------
+    camera : object
+             csmapi generated camera model
+
+    nnodes : int
+             Not sure
+
+    n_points : int
+               Number of points to generate between the corners of the bounding
+               box per side.
+
+    Returns
+    -------
+    : object
+      ogr polygon
+    '''
+    latlon_fp = generate_latlon_footprint(camera, nnodes=5, semi_major = semi_major, semi_minor = semi_minor, n_points = n_points)
+
     ecef = pyproj.Proj(proj='geocent', a=semi_major, b=semi_minor)
     lla = pyproj.Proj(proj='latlon', a=semi_major, b=semi_minor)
 
-    isize = camera.getImageSize()
-    isize = [isize.samp, isize.line]
-    x = np.linspace(0,isize[1], 10)
-    y = np.linspace(0,isize[0], 10)
-    multipoly = ogr.Geometry(ogr.wkbMultiPolygon)
-    boundary = [(i,0.) for i in x] + [(isize[1], i) for i in y[1:]] +\
-               [(i, isize[0]) for i in x[::-1][1:]] + [(0.,i) for i in y[::-1][1:]]
-    ring = ogr.Geometry(ogr.wkbLinearRing)
-    for i in boundary:
-        gnd = camera.imageToGround(csmapi.ImageCoord(*i), 0)
-        lons, lats, alts = pyproj.transform(ecef, lla, gnd.x, gnd.y, gnd.z)
-        ring.AddPoint(lons, lats)
-    poly = ogr.Geometry(ogr.wkbPolygon)
-    poly.AddGeometry(ring)
-    multipoly.AddGeometry(poly)
-    return multipoly
+    # Step over all geometry objects in the latlon footprint
+    for i in range(latlon_fp.GetGeometryCount()):
+        latlon_coords = np.array(latlon_fp.GetGeometryRef(i).GetGeometryRef(0).GetPoints())
 
-def generate_bodyfixed_footprint(camera, nnodes=5):
-    isize = camera.imagesize[::-1]
-    x = np.linspace(0,isize[1], 10)
-    y = np.linspace(0,isize[0], 10)
-    boundary = [(i,0.) for i in x] + [(isize[1], i) for i in y[1:]] +\
-               [(i, isize[0]) for i in x[::-1][1:]] + [(0.,i) for i in y[::-1][1:]]
-    ring = ogr.Geometry(ogr.wkbLinearRing)
-    for i in boundary:
-        gnd = camera.imageToGround(*i, 0)
-        ring.AddPoint(gnd[0], gnd[1], gnd[2])
-    poly = ogr.Geometry(ogr.wkbPolygon)
-    poly.AddGeometry(ring)
-    return poly
+        # Check if the geometry object is populated with points
+        if len(latlon_coords) > 0:
+            x, y, z = pyproj.transform(lla, ecef,  latlon_coords[:,0], latlon_coords[:,1], latlon_coords[:,2])
+
+            # Step over all coordinate points in a geometry object and update said point
+            for j, _ in enumerate(latlon_coords):
+                latlon_fp.GetGeometryRef(i).GetGeometryRef(0).SetPoint(j, x[j], y[j], 0)
+
+    return latlon_fp
 
 def generate_vrt(camera, raster_size, fpath, outpath=None, no_data_value=0):
     gcps = generate_gcps(camera)
