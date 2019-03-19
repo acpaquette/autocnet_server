@@ -8,6 +8,7 @@ import sys
 import time
 import threading
 import warnings
+import traceback
 
 import sqlalchemy
 
@@ -15,6 +16,7 @@ from geoalchemy2.shape import to_shape, from_shape
 from geoalchemy2.elements import WKTElement, WKBElement
 from shapely.geometry import Point
 import shapely
+from gdal import ogr
 
 import csmapi
 import networkx as nx
@@ -47,7 +49,7 @@ from autocnet.utils import utils
 from autocnet.io import keypoints as io_keypoints
 from autocnet.transformation.fundamental_matrix import compute_reprojection_error
 
-from plurmy import spawn, spawn_jobarr, slurm_walltime_to_seconds
+from plurmy import Slurm
 from autocnet_server import Session, engine
 from autocnet_server.db.model import Images, Keypoints, Matches, Cameras, Network, Base, Overlay, Edges, Costs
 from autocnet_server.db.connection import new_connection, Parent
@@ -56,12 +58,12 @@ from autocnet_server.sensors.csm import create_camera, generate_latlon_footprint
 
 
 class NetworkNode(Node):
-    def __init__(self, *args, parent=None, **kwargs):
+    def __init__(self, *args, parent=None, plugin_name = 'USGS_ASTRO_LINE_SCANNER_PLUGIN', **kwargs):
         # If this is the first time that the image is seen, add it to the DB
-        if parent is None:
-            self.parent = Parent(config)
-        else:
-            self.parent = parent
+        # if parent is None:
+        #     self.parent = Parent(config)
+        # else:
+        #     self.parent = parent
 
         # Create a session to work in
         session = Session()
@@ -77,15 +79,19 @@ class NetworkNode(Node):
         if exists is False:
             # Create the camera entry
             try:
-                self._camera = create_camera(self.geodata)
+                self._camera = create_camera(self.geodata, plugin_name = plugin_name)
                 serialized_camera = self._camera.getModelState()
                 cam = Cameras(camera=serialized_camera)
-            except:
+            except Exception as e:
+                print("Error in cam calculation")
+                print(e)
                 cam = None
             kpspath = io_keypoints.create_output_path(self.geodata.file_name)
 
             # Create the keypoints entry
             kps = Keypoints(path=kpspath, nkeypoints=0)
+            # _footprint_latlon = WKTElement(_footprint_latlon, srid=config['spatial']['srid'])
+
             # Create the image
             i = Images(name=kwargs['image_name'],
                        path=kwargs['image_path'],
@@ -177,22 +183,31 @@ class NetworkNode(Node):
             if res is not None:
                 plugin = csmapi.Plugin.findPlugin('USGS_ASTRO_LINE_SCANNER_PLUGIN')
                 self._camera = plugin.constructModelFromState(res.camera)
+            else:
+                self._camera = None
         return self._camera
 
     @property
     def footprint(self):
-
         res = Session().query(Images).filter(Images.id == self['node_id']).first()
         if res is None:
             try:
-                footprint_latlon = generate_latlon_footprint(self.camera)
-                footprint_latlon = footprint_latlon.ExportToWkt()
-                footprint_latlon = WKTElement(footprint_latlon, srid=config['spatial']['srid'])
+                print('Trying CSM')
+                _footprint_latlon = generate_latlon_footprint(self.camera)
             except:
-                footprint_latlon = None
+                try:
+                    print('Trying File read')
+                    footprint = self.geodata.footprint.GetGeometryRef(0)
+                    _footprint_latlon = ogr.Geometry(ogr.wkbMultiPolygon)
+                    _footprint_latlon.AddGeometry(footprint)
+                except:
+                    print("Unable to obtain footprint from file or from a camera model")
+                    _footprint_latlon = None
+            _footprint_latlon = _footprint_latlon.ExportToWkt()
+            _footprint_latlon = WKTElement(_footprint_latlon, srid=config['spatial']['srid'])
         else:
-            footprint_latlon = to_shape(res.footprint_latlon)
-        return footprint_latlon
+            _footprint_latlon = to_shape(res.footprint_latlon)
+        return _footprint_latlon
 
     def generate_vrt(self, **kwargs):
         """
@@ -547,7 +562,9 @@ class NetworkCandidateGraph(network.CandidateGraph):
         if isinstance(on, EdgeView):
             key = 2
 
-        for job_counter, elem in enumerate(onobj.data('data')):
+        job_counter = 0
+
+        for job_num, elem in enumerate(onobj.data('data')):
             # Determine if we are working with an edge or a node
             if len(elem) > 2:
                 id = (elem[0], elem[1])
@@ -566,18 +583,17 @@ class NetworkCandidateGraph(network.CandidateGraph):
                     'param_step':1}
 
             self.redis_queue.rpush(self.processing_queue, json.dumps(msg))
+            job_counter = job_num
 
-        # SLURM is 1 based, while enumerate is 0 based
+        # Slurm array jobs are 1 based so we need to add one
         job_counter += 1
-
         # Submit the jobs
-        spawn_jobarr('acn_submit', job_counter,
-                     mem=config['cluster']['processing_memory'],
-                     time=walltime,
-                     queue=config['cluster']['queue'],
-                     outdir=config['cluster']['cluster_log_dir']+'/slurm-%A_%a.out',
-                     env=config['python']['env_name'])
-
+        job = Slurm('acn_submit',
+                    mem_per_cpu=config['cluster']['processing_memory'],
+                    time=walltime,
+                    partition=config['cluster']['queue'],
+                    output=config['cluster']['cluster_log_dir']+'/slurm-%A_%a.out')
+        job.submit(array='1-{}%{}'.format(job_counter, '20'))
         return job_counter
 
     def generic_callback(self, msg):
@@ -606,7 +622,7 @@ class NetworkCandidateGraph(network.CandidateGraph):
         SELECT ST_Polygonize(the_geom) AS the_geom FROM (
             SELECT ST_Union(the_geom) AS the_geom FROM (
                 SELECT ST_ExteriorRing(footprint_latlon) AS the_geom
-                FROM images) AS lines
+            FROM images) AS lines
         ) AS noded_lines
     )
 )"""
@@ -656,11 +672,11 @@ class NetworkCandidateGraph(network.CandidateGraph):
             else:
                 self.redis_queue.rpush(config['redis']['processing_queue'], msg)
                 cmds += 1
-        script = 'acn_create_network'
-        spawn_jobarr(script, cmds,
-                    mem=config['cluster']['processing_memory'],
-                    queue=config['cluster']['queue'],
-                    env=config['python']['env_name'])
+        job = Slurm('acn_create_network',
+                    mem_per_cpu=config['cluster']['processing_memory'],
+                    partition=config['cluster']['queue'],
+                    output=config['cluster']['cluster_log_dir']+'/slurm-%A_%a.out')
+        job.submit(array='1-{}%{}'.format(cmds, '20'))
         session.close()
 
     @classmethod
@@ -723,7 +739,7 @@ AND i1.id < i2.id""".format(query_string)
         return obj
 
     @classmethod
-    def from_filelist(cls, filelist, basepath=None):
+    def from_filelist(cls, filelist, basepath=None, **kwargs):
         """
         This methods instantiates a network candidate graph by first parsing
         the filelist and adding those images to the database. This method then
@@ -741,7 +757,13 @@ AND i1.id < i2.id""".format(query_string)
         parent = Parent(config)
         # Get each of the images added to the DB (duplicates, by PATH, are omitted)
         for f in filelist:
-            n = NetworkNode(image_name=f[0], image_path=f[1], parent=parent)
+            print("Trying", f)
+            try:
+                n = NetworkNode(image_name=f[0], image_path=f[1], parent=parent, **kwargs)
+            except Exception as e:
+                print("Failed to generate node for image:", f[0])
+                print(e)
+
         pathlist = [f[1] for f in filelist]
 
         qs = 'SELECT * FROM public.Images WHERE public.Images.path IN ({})'.format(','.join("'{0}'".format(p) for p in pathlist))

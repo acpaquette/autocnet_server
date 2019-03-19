@@ -33,7 +33,7 @@ class Keypoints(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     image_id = Column(Integer, ForeignKey("images.id", ondelete="CASCADE"))
     convex_hull_image = Column(Geometry('POLYGON'))
-    convex_hull_latlon = Column(Geometry('POLYGON', srid=949900, dimension=3))
+    convex_hull_latlon = Column(Geometry('POLYGON', srid=949900, dimension=2))
     path = Column(String)
     nkeypoints = Column(Integer)
 
@@ -128,7 +128,7 @@ class Network(Base):
     x = Column(Float)
     y = Column(Float)
     geom = Column(Geometry('POINTZ', dimension=3, srid=949900, spatial_index=True))
-    
+
 class Overlay(Base):
     __tablename__ = 'overlay'
     id = Column(Integer, primary_key=True, autoincrement=True)

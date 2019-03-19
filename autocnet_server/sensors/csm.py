@@ -3,6 +3,7 @@ import json
 import os
 
 from csmapi import csmapi
+from autocnet.utils.utils import find_in_dict
 import jinja2
 import requests
 
@@ -12,6 +13,28 @@ import pyproj
 import gdal
 from gdal import ogr
 import pvl
+
+def create_camera(obj, url='http://pfeffer.wr.usgs.gov/v1/pds/',
+                 plugin_name='USGS_ASTRO_LINE_SCANNER_PLUGIN',
+                 model_name='USGS_ASTRO_LINE_SCANNER_SENSOR_MODEL'):
+
+    base_path = os.path.dirname(obj.file_name)
+    json_file = '{}.json'.format(obj.base_name)
+    json_file = os.path.join(base_path, json_file)
+
+    data_serialized = {'label': pvl.dumps(obj.metadata).decode()}
+    r = requests.post(url, json=data_serialized).json()
+    r['IKCODE'] = -1
+
+    with open(json_file, 'w') as f:
+        json.dump(r, f)
+
+    # Get the ISD back and instantiate a local ISD for the image
+    isd = csmapi.Isd(json_file)
+    # Create the plugin and camera as usual
+    plugin = csmapi.Plugin.findPlugin(plugin_name)
+    if plugin.canModelBeConstructedFromISD(isd, model_name):
+        return plugin.constructModelFromISD(isd, model_name)
 
 def generate_boundary(isize, nnodes=5, n_points=10):
     '''
@@ -88,7 +111,8 @@ def generate_latlon_boundary(camera, nnodes=5, semi_major=3396190, semi_minor=33
         # Could be potential errors or warnings from imageToGround
         try:
             gnd = camera.imageToGround(csmapi.ImageCoord(*b), 0)
-        except:
+        except Exception as e:
+            print(e)
             pass
 
         gnds[i] = [gnd.x, gnd.y, gnd.z]
@@ -211,6 +235,7 @@ def generate_latlon_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3
             current_ring.AddPoint(360 - 180, (slope*360 + b))
 
         lat, lon = coord
+        # -180 converts 0, 360 latitude space back into -180, 180 latitude space
         current_ring.AddPoint(lat - 180, lon)
         previous_point = coord
 
@@ -224,6 +249,11 @@ def generate_latlon_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3
         multipoly.AddGeometry(poly)
 
     return multipoly
+
+def vector_math(coord, previous_coord):
+    coord = np.array(coord)
+    previous_coord = np.array(previous_coord)
+    return previous_coord + (coord - previous_coord) * (180 - previous_coord[0])/((coord - previous_coord)[0])
 
 def generate_bodyfixed_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3376200, n_points=10):
     '''
