@@ -137,7 +137,7 @@ class NetworkNode(Node):
     def keypoints(self):
         try:
             return io_keypoints.from_hdf(self.keypoint_file, descriptors=False)
-        except:
+        except Exception as e:
             return pd.DataFrame()
 
     @keypoints.setter
@@ -161,7 +161,7 @@ class NetworkNode(Node):
 
     @descriptors.setter
     def descriptors(self, desc):
-        if isinstance(desc, np.array):
+        if isinstance(desc, np.ndarray):
             io_keypoints.to_hdf(self.keypoint_file, descriptors=desc)
 
     @property
@@ -181,7 +181,7 @@ class NetworkNode(Node):
         if not getattr(self, '_camera', None):
             res = self._from_db(Cameras)
             if res is not None:
-                plugin = csmapi.Plugin.findPlugin('USGS_ASTRO_LINE_SCANNER_PLUGIN')
+                plugin = csmapi.Plugin.findPlugin('UsgsAstroPluginCSM')
                 self._camera = plugin.constructModelFromState(res.camera)
             else:
                 self._camera = None
@@ -393,8 +393,8 @@ class NetworkEdge(edge.Edge):
                     mapping[index] = row_val
                 to_db_update.append(mapping)
             else:
-                match = Matches(source=int(row.source), source_idx=int(row.source_idx),
-                            destination=int(row.destination), destination_idx=int(row.destination_idx))
+                match = Matches(source=int(row.source_image), source_idx=int(row.source_idx),
+                            destination=int(row.destination_image), destination_idx=int(row.destination_idx))
                 to_db_add.append(match)
         if to_db_add:
             session.bulk_save_objects(to_db_add)
@@ -541,7 +541,7 @@ class NetworkCandidateGraph(network.CandidateGraph):
         """
         return self.redis_queue.flushall()
 
-    def apply(self, function, on='edge',out=None, args=(), walltime='01:00:00', **kwargs):
+    def apply(self, function, on='edge',out=None, args=(), walltime='01:00:00', num_jobs = 20, **kwargs):
 
         options = {
             'edge' : self.edges,
@@ -593,7 +593,7 @@ class NetworkCandidateGraph(network.CandidateGraph):
                     time=walltime,
                     partition=config['cluster']['queue'],
                     output=config['cluster']['cluster_log_dir']+'/slurm-%A_%a.out')
-        job.submit(array='1-{}%{}'.format(job_counter, '20'))
+        job.submit(array='1-{}%{}'.format(job_counter, num_jobs))
         return job_counter
 
     def generic_callback(self, msg):
@@ -655,7 +655,7 @@ class NetworkCandidateGraph(network.CandidateGraph):
         session.commit()
         session.close()
 
-    def create_network(self, nodes=[]):
+    def create_network(self, nodes=[], num_jobs = 20):
         cmds = 0
         session = Session()
         for res in session.query(Overlay):
@@ -676,7 +676,7 @@ class NetworkCandidateGraph(network.CandidateGraph):
                     mem_per_cpu=config['cluster']['processing_memory'],
                     partition=config['cluster']['queue'],
                     output=config['cluster']['cluster_log_dir']+'/slurm-%A_%a.out')
-        job.submit(array='1-{}%{}'.format(cmds, '20'))
+        job.submit(array='1-{}%{}'.format(cmds, num_jobs))
         session.close()
 
     @classmethod
@@ -720,23 +720,27 @@ FROM
 	i as i1, i as i2
 WHERE ST_INTERSECTS(i1.footprint_latlon, i2.footprint_latlon) = TRUE
 AND i1.id < i2.id""".format(query_string)
-        session = Session()
-        res = session.execute(composite_query)
+        ncg = NetworkCandidateGraph()
 
-        adjacency = defaultdict(list)
-        adjacency_lookup = {}
+        session = Session()
+        res = session.execute(query_string)
+
+        for r in res:
+            image_id, image, image_path, _, latlon_footprint, _ = r
+            ncg.add_node(image_id, data = NetworkNode(image_name = image, image_path = image_path))
+
+        res = session.execute(composite_query)
+        nodes = ncg.nodes(data = 'data')
+
         for r in res:
             sid, spath, did, dpath = r
+            s_node = nodes[sid]
+            d_node = nodes[did]
+            ncg.add_edge(sid, did, data = NetworkEdge(s_node, d_node))
 
-            adjacency_lookup[spath] = sid
-            adjacency_lookup[dpath] = did
-            if spath != dpath:
-                adjacency[spath].append(dpath)
         session.close()
-        # Add nodes that do not overlap any images
-        obj = cls.from_adjacency(adjacency, node_id_map=adjacency_lookup, config=config)
 
-        return obj
+        return ncg
 
     @classmethod
     def from_filelist(cls, filelist, basepath=None, **kwargs):
