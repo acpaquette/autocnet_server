@@ -83,20 +83,19 @@ class NetworkNode(Node):
                 serialized_camera = self._camera.getModelState()
                 cam = Cameras(camera=serialized_camera)
             except Exception as e:
-                print("Error in cam calculation")
-                print(e)
+                # Add Logger
                 cam = None
             kpspath = io_keypoints.create_output_path(self.geodata.file_name)
 
             # Create the keypoints entry
             kps = Keypoints(path=kpspath, nkeypoints=0)
-            # _footprint_latlon = WKTElement(_footprint_latlon, srid=config['spatial']['srid'])
 
             # Create the image
             i = Images(name=kwargs['image_name'],
                        path=kwargs['image_path'],
                        footprint_latlon=self.footprint,
-                       cameras=cam, keypoints=kps)
+                       cameras=cam,
+                       keypoints=kps)
             session = Session()
             session.add(i)
             session.commit()
@@ -761,12 +760,11 @@ AND i1.id < i2.id""".format(query_string)
         parent = Parent(config)
         # Get each of the images added to the DB (duplicates, by PATH, are omitted)
         for f in filelist:
-            print("Trying", f)
             try:
                 n = NetworkNode(image_name=f[0], image_path=f[1], parent=parent, **kwargs)
             except Exception as e:
-                print("Failed to generate node for image:", f[0])
-                print(e)
+                # Add Logger
+                pass
 
         pathlist = [f[1] for f in filelist]
 

@@ -3,7 +3,6 @@ import json
 import os
 
 from csmapi import csmapi
-from autocnet.utils.utils import find_in_dict
 import jinja2
 import requests
 
@@ -112,7 +111,7 @@ def generate_latlon_boundary(camera, nnodes=5, semi_major=3396190, semi_minor=33
         try:
             gnd = camera.imageToGround(csmapi.ImageCoord(*b), 0)
         except Exception as e:
-            print(e)
+            # Add Logger
             pass
 
         gnds[i] = [gnd.x, gnd.y, gnd.z]
@@ -249,11 +248,6 @@ def generate_latlon_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3
         multipoly.AddGeometry(poly)
 
     return multipoly
-
-def vector_math(coord, previous_coord):
-    coord = np.array(coord)
-    previous_coord = np.array(previous_coord)
-    return previous_coord + (coord - previous_coord) * (180 - previous_coord[0])/((coord - previous_coord)[0])
 
 def generate_bodyfixed_footprint(camera, nnodes=5, semi_major=3396190, semi_minor=3376200, n_points=10):
     '''
