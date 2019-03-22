@@ -3,13 +3,13 @@ import time
 
 import numpy as np
 
-from plurmy import slurm_walltime_to_seconds
+from plurmy import Slurm
 
 def pop_computetime_push(queue, inqueue, outqueue):
     """
     Pop a message from a 'todo' queue, compute the maximum possible walltime,
     push the updated message to 'processing queue', and return the
-    original message.' 
+    original message.'
 
     Parameters
     ----------
@@ -28,7 +28,8 @@ def pop_computetime_push(queue, inqueue, outqueue):
     """
     # Load the message out of the processing queue and add a max processing time key
     msg = json.loads(queue.rpop(inqueue))
-    msg['max_time'] = time.time() + slurm_walltime_to_seconds(msg['walltime'])
+    job = Slurm('dummy', time = msg['walltime'])
+    msg['max_time'] = time.time() + job.slurm_walltime_to_seconds()
 
     # Push the message to the processing queue with the updated max_time
     queue.rpush(outqueue, json.dumps(msg))
@@ -43,7 +44,7 @@ def finalize(response, remove_key, queue, outqueue, removequeue):
     ----------
     response : dict
                The reponse to the callback function
-    
+
     remove_key : dict
                  The key to remove from the removequeue
 
